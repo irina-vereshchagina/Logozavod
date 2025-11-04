@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
+from aiogram.client.default import DefaultBotSettings  # ✅ заменено
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -20,7 +20,7 @@ logging.getLogger("aiogram.event").setLevel(logging.DEBUG)
 
 
 # --- Инициализация бота/диспетчера ---
-defaults = DefaultBotProperties(parse_mode=ParseMode.HTML)
+defaults = DefaultBotSettings(parse_mode=ParseMode.HTML)  # ✅ заменено
 bot = Bot(token=TELEGRAM_BOT_TOKEN, default=defaults)
 dp = Dispatcher(storage=MemoryStorage())
 
