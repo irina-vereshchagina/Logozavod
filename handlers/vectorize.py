@@ -5,11 +5,13 @@ from utils.user_state import single_user_lock, is_generating, set_generating, se
 import logging
 import os
 import requests
+import base64
 from utils.user_roles import can_vectorize, increment_usage, get_usage, get_user_role, ROLE_LIMITS
 
 # 👉 Временно жестко прописанные креды:
-VECTORIZE_USER = "API_ID"
-VECTORIZE_PASS = "API_SECRET"
+VECTORIZE_USER = "API_ID"       # 🔹 замени на свой API ID
+VECTORIZE_PASS = "API_SECRET"   # 🔹 замени на свой API Secret
+
 
 async def ask_for_image(message: types.Message):
     user_id = message.from_user.id
@@ -19,6 +21,7 @@ async def ask_for_image(message: types.Message):
         return
     set_user_state(user_id, STATE_VECTORIZE)
     await message.answer("📤 Пришли изображение для векторизации.", reply_markup=get_back_keyboard())
+
 
 async def handle_vectorization_image(message: types.Message):
     user_id = message.from_user.id
@@ -54,16 +57,25 @@ async def handle_vectorization_image(message: types.Message):
 
             await message.answer("🔄 Векторизую изображение, подождите...", reply_markup=get_back_keyboard())
 
+            # === Формируем корректный Basic Auth заголовок ===
+            credentials = f"{VECTORIZE_USER}:{VECTORIZE_PASS}"
+            b64_credentials = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
+            headers = {
+                "Authorization": f"Basic {b64_credentials}"
+            }
+
+            # === Отправляем запрос ===
             with open(temp_path, "rb") as img:
                 response = requests.post(
                     'https://ru.vectorizer.ai/api/v1/vectorize',
                     files={'image': img},
                     data={'mode': 'test'},
-                    auth=(VECTORIZE_USER, VECTORIZE_PASS)  # 👈 Basic Auth
+                    headers=headers  # ✅ вместо auth=()
                 )
 
             os.remove(temp_path)
 
+            # === Обработка ответа ===
             if response.status_code == 200:
                 svg_path = f"vectorized_{user_id}.svg"
                 with open(svg_path, "wb") as f:
