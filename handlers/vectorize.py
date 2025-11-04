@@ -12,7 +12,6 @@ from utils.user_roles import can_vectorize, increment_usage, get_usage, get_user
 VECTORIZE_USER = "your_actual_API_ID"
 VECTORIZE_PASS = "your_actual_API_SECRET"
 
-
 async def ask_for_image(message: types.Message):
     user_id = message.from_user.id
     role = get_user_role(user_id)
@@ -21,7 +20,6 @@ async def ask_for_image(message: types.Message):
         return
     set_user_state(user_id, STATE_VECTORIZE)
     await message.answer("📤 Пришли изображение для векторизации.", reply_markup=get_back_keyboard())
-
 
 async def handle_vectorization_image(message: types.Message):
     user_id = message.from_user.id
@@ -67,8 +65,8 @@ async def handle_vectorization_image(message: types.Message):
                 response = requests.post(
                     'https://ru.vectorizer.ai/api/v1/vectorize',
                     files={'image': img},
-                    data={'mode': 'test'},
-                    headers=headers  # 👈 передаём заголовок, а не auth=
+                    data={'mode': 'high'},  # ✅ Платный режим без watermark
+                    headers=headers
                 )
 
             os.remove(temp_path)
@@ -90,7 +88,10 @@ async def handle_vectorization_image(message: types.Message):
                 await message.answer(f"📊 Осталось векторизаций: {v_left}", reply_markup=get_back_keyboard())
 
             else:
-                await message.answer(f"❌ Ошибка векторизации: {response.status_code}\n{response.text}", reply_markup=get_back_keyboard())
+                await message.answer(
+                    f"❌ Ошибка векторизации: {response.status_code}\n{response.text}",
+                    reply_markup=get_back_keyboard()
+                )
 
         except Exception as e:
             logging.exception("Ошибка при векторизации")
