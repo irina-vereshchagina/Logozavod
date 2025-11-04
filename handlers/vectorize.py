@@ -8,9 +8,9 @@ import requests
 import base64
 from utils.user_roles import can_vectorize, increment_usage, get_usage, get_user_role, ROLE_LIMITS
 
-# 👉 Временно жестко прописанные креды:
-VECTORIZE_USER = "API_ID"       # 🔹 замени на свой API ID
-VECTORIZE_PASS = "API_SECRET"   # 🔹 замени на свой API Secret
+# ✅ Укажи свои реальные API ID и Secret от https://vectorizer.ai/account/api
+VECTORIZE_USER = "your_actual_API_ID"
+VECTORIZE_PASS = "your_actual_API_SECRET"
 
 
 async def ask_for_image(message: types.Message):
@@ -31,7 +31,6 @@ async def handle_vectorization_image(message: types.Message):
         role = get_user_role(user_id)
         v_used = usage["vectorizations"]
         v_total = ROLE_LIMITS[role]["vectorizations"]
-
         await message.answer(
             f"❌ Вы исчерпали лимит <b>векторизаций</b> для вашей роли.\n\n"
             f"🖼 Векторизаций: {v_used} / {v_total}\n"
@@ -57,25 +56,23 @@ async def handle_vectorization_image(message: types.Message):
 
             await message.answer("🔄 Векторизую изображение, подождите...", reply_markup=get_back_keyboard())
 
-            # === Формируем корректный Basic Auth заголовок ===
+            # 🔐 Создаём base64 заголовок авторизации
             credentials = f"{VECTORIZE_USER}:{VECTORIZE_PASS}"
             b64_credentials = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
             headers = {
                 "Authorization": f"Basic {b64_credentials}"
             }
 
-            # === Отправляем запрос ===
             with open(temp_path, "rb") as img:
                 response = requests.post(
                     'https://ru.vectorizer.ai/api/v1/vectorize',
                     files={'image': img},
                     data={'mode': 'test'},
-                    headers=headers  # ✅ вместо auth=()
+                    headers=headers  # 👈 передаём заголовок, а не auth=
                 )
 
             os.remove(temp_path)
 
-            # === Обработка ответа ===
             if response.status_code == 200:
                 svg_path = f"vectorized_{user_id}.svg"
                 with open(svg_path, "wb") as f:
