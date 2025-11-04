@@ -1,10 +1,9 @@
-
-# services/logo_generator.py
-
 import os
+import base64
 import requests
 from io import BytesIO
 from dotenv import load_dotenv
+from PIL import Image
 from openai import OpenAI
 
 load_dotenv()
@@ -18,6 +17,23 @@ def _placeholder_image() -> BytesIO:
     resp = requests.get(url, timeout=30)
     resp.raise_for_status()
     return BytesIO(resp.content)
+
+
+def _image_from_base64(base64_string: str) -> BytesIO:
+    """
+    Преобразует base64-строку (data:image/png;base64,...) в BytesIO с изображением JPEG
+    """
+    try:
+        header, encoded = base64_string.split(",", 1)
+        image_data = base64.b64decode(encoded)
+        img = Image.open(BytesIO(image_data)).convert("RGB")  # в JPEG только RGB
+        output = BytesIO()
+        img.save(output, format="JPEG")
+        output.seek(0)
+        return output
+    except Exception as e:
+        print(f"❌ Ошибка при конвертации base64: {e}")
+        return _placeholder_image()
 
 
 async def generate_image(user_prompt: str) -> BytesIO:
@@ -34,6 +50,7 @@ async def generate_image(user_prompt: str) -> BytesIO:
         }
     )
 
+    # 1. Уточняем промпт
     try:
         refine = client.chat.completions.create(
             model="openai/gpt-4o",
@@ -50,6 +67,7 @@ async def generate_image(user_prompt: str) -> BytesIO:
         print(f"⚠️ Ошибка уточнения промпта: {e}")
         refined_prompt = user_prompt
 
+    # 2. Генерация изображения
     try:
         img_response = client.chat.completions.create(
             model="openai/gpt-5-image-mini",
@@ -59,6 +77,9 @@ async def generate_image(user_prompt: str) -> BytesIO:
         images = img_response.choices[0].message.images
         image_url = images[0].get("image_url", {}).get("url")
 
+        if image_url.startswith("data:image"):
+            return _image_from_base64(image_url)
+
         resp = requests.get(image_url, timeout=60)
         resp.raise_for_status()
         return BytesIO(resp.content)
@@ -66,4 +87,3 @@ async def generate_image(user_prompt: str) -> BytesIO:
     except Exception as e:
         print(f"❌ Ошибка при генерации изображения: {e}")
         return _placeholder_image()
-
