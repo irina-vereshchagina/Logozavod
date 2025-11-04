@@ -8,7 +8,7 @@ import requests
 import base64
 from utils.user_roles import can_vectorize, increment_usage, get_usage, get_user_role, ROLE_LIMITS
 
-# ✅ Укажи свои реальные API ID и Secret от https://vectorizer.ai/account/api
+# 🔐 Укажи свои реальные данные
 VECTORIZE_USER = "your_actual_API_ID"
 VECTORIZE_PASS = "your_actual_API_SECRET"
 
@@ -54,24 +54,25 @@ async def handle_vectorization_image(message: types.Message):
 
             await message.answer("🔄 Векторизую изображение, подождите...", reply_markup=get_back_keyboard())
 
-            # 🔐 Создаём base64 заголовок авторизации
+            # 🔐 Заголовок авторизации
             credentials = f"{VECTORIZE_USER}:{VECTORIZE_PASS}"
             b64_credentials = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
             headers = {
                 "Authorization": f"Basic {b64_credentials}"
             }
 
+            # 🔁 Отправка на векторизацию
             with open(temp_path, "rb") as img:
                 response = requests.post(
                     'https://ru.vectorizer.ai/api/v1/vectorize',
                     files={'image': img},
-                    data={'mode': 'high'},  # ✅ Платный режим без watermark
+                    data={'mode': 'production'},  # ✅ режим без водяного знака
                     headers=headers
                 )
 
             os.remove(temp_path)
 
-            if response.status_code == 200:
+            if response.status_code == 200 and response.content:
                 svg_path = f"vectorized_{user_id}.svg"
                 with open(svg_path, "wb") as f:
                     f.write(response.content)
