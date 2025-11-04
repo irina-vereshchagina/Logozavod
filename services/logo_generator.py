@@ -1,63 +1,70 @@
+этот код совместим с моим проектом ?
+# services/logo_generator.py
+
 import os
 import requests
 from io import BytesIO
 from dotenv import load_dotenv
+from openai import OpenAI
 
 load_dotenv()
 
 USE_PLACEHOLDER = (os.getenv("USE_PLACEHOLDER", "false").strip().lower() == "true")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-# Если не хотим использовать OpenAI — вернём заглушку-картинку
+
 def _placeholder_image() -> BytesIO:
     url = "https://placehold.co/1024x1024/png?text=Logo"
     resp = requests.get(url, timeout=30)
     resp.raise_for_status()
     return BytesIO(resp.content)
 
+
 async def generate_image(user_prompt: str) -> BytesIO:
-    """
-    Генерирует изображение логотипа.
-    • Если USE_PLACEHOLDER=true — отдаёт плейсхолдер (не нужен ключ OpenAI).
-    • Если используем OpenAI, то:
-        - сначала уточним/улучшим промпт через новый endpoint /v1/responses,
-        - затем сгенерируем изображение через Images API (gpt-image-1 или dall-e-3).
-    """
-    if USE_PLACEHOLDER or not OPENAI_API_KEY:
+    if USE_PLACEHOLDER or not OPENROUTER_API_KEY:
         return _placeholder_image()
 
-    # === OpenAI 1.x синтаксис ===
-    from openai import OpenAI
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=OPENROUTER_API_KEY,
+        default_headers={
+            "HTTP-Referer": "https://yourdomain.com",
+            "X-Title": "Logozavod",
+            "User-Agent": "LogozavodBot/1.0"
+        }
+    )
 
-    # 1) Уточняем текстовый промпт (новый endpoint: responses.create)
     try:
-        refine = client.responses.create(
-            model="gpt-4.1-mini",
-            input=[
+        refine = client.chat.completions.create(
+            model="openai/gpt-4o",
+            messages=[
                 {"role": "system", "content": (
-                    "Ты помогаешь создавать краткие и чёткие промпты для генерации логотипов. "
-                    "Верни только одну сжатую фразу на английском без лишних комментариев."
+                    "Ты помогаешь создавать краткие и точные промпты для генерации логотипов. "
+                    "Ответь одной короткой фразой на английском, без пояснений."
                 )},
                 {"role": "user", "content": user_prompt},
             ],
         )
-        refined_prompt = refine.output_text.strip()
-    except Exception:
-        # Если что-то пошло не так — генерируем напрямую по пользовательскому промпту
+        refined_prompt = refine.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"⚠️ Ошибка уточнения промпта: {e}")
         refined_prompt = user_prompt
 
-    # 2) Генерация изображения (Images API), НЕ через chat.completions!
-    # Можно использовать "gpt-image-1" или "dall-e-3". Выберем gpt-image-1.
-    img = client.images.generate(
-        model="gpt-image-1",
-        prompt=refined_prompt,
-        n=1,
-        size="1024x1024",
-        # quality="standard",  # параметр не обязателен
-    )
+    try:
+        img_response = client.chat.completions.create(
+            model="openai/gpt-5-image-mini",
+            messages=[{"role": "user", "content": refined_prompt}],
+            modalities=["image", "text"],
+        )
+        images = img_response.choices[0].message.images
+        image_url = images[0].get("image_url", {}).get("url")
 
-    image_url = img.data[0].url
-    resp = requests.get(image_url, timeout=60)
-    resp.raise_for_status()
-    return BytesIO(resp.content)
+        resp = requests.get(image_url, timeout=60)
+        resp.raise_for_status()
+        return BytesIO(resp.content)
+
+    except Exception as e:
+        print(f"❌ Ошибка при генерации изображения: {e}")
+        return _placeholder_image()
+
+мне нужно что бы все работало хорошо 
