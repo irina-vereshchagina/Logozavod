@@ -1,4 +1,4 @@
-этот код совместим с моим проектом ?
+
 # services/logo_generator.py
 
 import os
@@ -67,4 +67,3 @@ async def generate_image(user_prompt: str) -> BytesIO:
         print(f"❌ Ошибка при генерации изображения: {e}")
         return _placeholder_image()
 
-мне нужно что бы все работало хорошо 
