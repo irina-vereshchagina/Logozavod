@@ -5,13 +5,11 @@ from utils.user_state import single_user_lock, is_generating, set_generating, se
 import logging
 import os
 import requests
-from dotenv import load_dotenv
 from utils.user_roles import can_vectorize, increment_usage, get_usage, get_user_role, ROLE_LIMITS
 
-load_dotenv()
-
-VECTORIZE_USER = os.getenv("VECTORIZE_USER")
-VECTORIZE_PASS = os.getenv("VECTORIZE_PASS")
+# 👉 Временно жестко прописанные креды:
+VECTORIZE_USER = "ваш_API_ID"
+VECTORIZE_PASS = "ваш_API_SECRET"
 
 async def ask_for_image(message: types.Message):
     user_id = message.from_user.id
@@ -34,8 +32,9 @@ async def handle_vectorization_image(message: types.Message):
         await message.answer(
             f"❌ Вы исчерпали лимит <b>векторизаций</b> для вашей роли.\n\n"
             f"🖼 Векторизаций: {v_used} / {v_total}\n"
-            f"ℹ️ Посмотреть лимиты можно через 'ℹ️ Информация'"
-        , reply_markup=get_back_keyboard())
+            f"ℹ️ Посмотреть лимиты можно через 'ℹ️ Информация'",
+            reply_markup=get_back_keyboard()
+        )
         return
 
     if is_generating(user_id):
@@ -60,7 +59,7 @@ async def handle_vectorization_image(message: types.Message):
                     'https://ru.vectorizer.ai/api/v1/vectorize',
                     files={'image': img},
                     data={'mode': 'test'},
-                    auth=(VECTORIZE_USER, VECTORIZE_PASS)  # 👈 HTTP Basic Auth
+                    auth=(VECTORIZE_USER, VECTORIZE_PASS)  # 👈 Basic Auth
                 )
 
             os.remove(temp_path)
