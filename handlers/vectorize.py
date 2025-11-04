@@ -8,8 +8,8 @@ import requests
 from utils.user_roles import can_vectorize, increment_usage, get_usage, get_user_role, ROLE_LIMITS
 
 # 👉 Временно жестко прописанные креды:
-VECTORIZE_USER = "ваш_API_ID"
-VECTORIZE_PASS = "ваш_API_SECRET"
+VECTORIZE_USER = "API_ID"
+VECTORIZE_PASS = "API_SECRET"
 
 async def ask_for_image(message: types.Message):
     user_id = message.from_user.id
