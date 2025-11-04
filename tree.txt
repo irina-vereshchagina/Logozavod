@@ -1,0 +1,675 @@
+📁 Структура проекта:
+
+ - bot.py
+ - config.py
+ - keyboards.py
+ - test.py
+ - tree.py
+ - handlers\generation.py
+ - handlers\info.py
+ - handlers\prompt.py
+ - handlers\start.py
+ - handlers\vectorize.py
+ - handlers\__init__.py
+ - services\logo_generator.py
+ - services\__init__.py
+ - utils\states.py
+ - utils\user_roles.py
+ - utils\user_state.py
+ - utils\__init__.py
+
+📄 Содержимое файлов:
+
+
+🔹 bot.py:
+------------------------------------------------------------
+import logging
+import asyncio
+from aiogram import Bot, Dispatcher
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
+from aiogram.filters import CommandStart, Command
+from aiogram.fsm.storage.memory import MemoryStorage
+from config import TELEGRAM_BOT_TOKEN
+from handlers import start, info, prompt, generation, vectorize
+from utils.user_state import get_user_state, STATE_GENERATE, STATE_VECTORIZE, STATE_MENU
+from utils.user_roles import load_db
+
+logging.basicConfig(level=logging.INFO)
+logging.getLogger("aiogram.event").setLevel(logging.DEBUG)
+
+defaults = DefaultBotProperties(parse_mode=ParseMode.HTML)
+bot = Bot(token=TELEGRAM_BOT_TOKEN, default=defaults)
+dp = Dispatcher(storage=MemoryStorage())
+
+def is_generate_text(message):
+    return (
+        message.text and not message.text.startswith("/")
+        and get_user_state(message.from_user.id) == STATE_GENERATE
+    )
+
+def is_vectorization_photo(message):
+    return (
+        message.photo
+        and get_user_state(message.from_user.id) == STATE_VECTORIZE
+    )
+
+# Регистрация хендлеров
+dp.message.register(start.start, CommandStart())
+dp.message.register(start.setrole_command, Command(commands=["setrole"]))
+dp.message.register(start.start, lambda m: m.text == "⬅️ В меню")
+dp.message.register(info.info, lambda m: m.text == "ℹ️ Информация")
+dp.message.register(prompt.prompt_for_idea, lambda m: m.text == "🎨 Генерация логотипа")
+dp.message.register(vectorize.ask_for_image, lambda m: m.text == "🖼 Векторизация")
+dp.message.register(vectorize.handle_vectorization_image, is_vectorization_photo)
+dp.message.register(generation.handle_idea, is_generate_text)
+
+@dp.message()
+async def fallback_handler(message):
+    state = get_user_state(message.from_user.id)
+    if state == STATE_MENU:
+        await message.answer("❗️Вы сейчас в главном меню. Пожалуйста, выберите действие кнопкой ниже.")
+    elif state == STATE_GENERATE:
+        await message.answer("❗️Ожидается текстовая идея логотипа.")
+    elif state == STATE_VECTORIZE:
+        await message.answer("❗️Ожидается изображение (фото) для векторизации.")
+    else:
+        await message.answer("❓ Непонятное состояние. Нажмите '⬅️ В меню'.")
+
+if __name__ == "__main__":
+    load_db()
+    asyncio.run(dp.start_polling(bot))
+
+
+🔹 config.py:
+------------------------------------------------------------
+import os
+from dotenv import load_dotenv
+
+# Загружаем переменные из .env
+load_dotenv()
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+# Приводим к булевому значению (true → True, все остальное → False)
+USE_PLACEHOLDER = os.getenv("USE_PLACEHOLDER", "false").strip().lower() == "true"
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+
+🔹 keyboards.py:
+------------------------------------------------------------
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+
+def get_main_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🎨 Генерация логотипа")],
+            [KeyboardButton(text="🖼 Векторизация")],
+            [KeyboardButton(text="ℹ️ Информация")],
+        ],
+        resize_keyboard=True
+    )
+
+def get_back_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="⬅️ В меню")],
+        ],
+        resize_keyboard=True
+    )
+
+
+🔹 test.py:
+------------------------------------------------------------
+import os
+import re
+
+TARGET_FILES = [
+    "handlers/generation.py",
+    "handlers/vectorize.py",
+]
+
+ANSWER_CALL_RE = re.compile(r'(await\s+message\.answer\(([^)]*))\)', re.DOTALL)
+IMPORT_RE = re.compile(r'^from\s+keyboards\s+import\s+([^\n]+)', re.MULTILINE)
+
+def ensure_import(code: str, func_name: str) -> str:
+    """Добавляет функцию в строку импорта, либо вставляет новый импорт"""
+    match = IMPORT_RE.search(code)
+    if match:
+        existing = match.group(1).replace(" ", "").split(",")
+        if func_name not in existing:
+            new_import = match.group(0).replace(match.group(1), match.group(1) + f", {func_name}")
+            return code.replace(match.group(0), new_import)
+        else:
+            return code  # уже импортировано
+    else:
+        # Вставим новый импорт сразу после всех импортов
+        lines = code.splitlines()
+        for i, line in enumerate(lines):
+            if line.strip() and not line.strip().startswith("#") and not line.strip().startswith("import") and not line.strip().startswith("from"):
+                # Вставим до первой не-импорт строки
+                lines.insert(i, f"from keyboards import {func_name}")
+                break
+        return "\n".join(lines)
+
+def process_file(file_path):
+    with open(file_path, "r", encoding="utf-8") as f:
+        code = f.read()
+
+    modified = False
+    new_code = code
+
+    for match in ANSWER_CALL_RE.finditer(code):
+        full_call = match.group(0)
+        inner = match.group(2)
+
+        if "reply_markup=" in inner:
+            continue
+
+        fixed_call = f"{match.group(1)}, reply_markup=get_back_keyboard())"
+        new_code = new_code.replace(full_call, fixed_call)
+        modified = True
+
+    if modified:
+        # Добавим импорт, если надо
+        new_code = ensure_import(new_code, "get_back_keyboard")
+
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(new_code)
+        print(f"✅ Обновлён файл: {file_path}")
+    else:
+        print(f"➖ Без изменений: {file_path}")
+
+if __name__ == "__main__":
+    for path in TARGET_FILES:
+        if os.path.exists(path):
+            process_file(path)
+        else:
+            print(f"❌ Файл не найден: {path}")
+
+
+🔹 tree.py:
+------------------------------------------------------------
+import os
+
+IGNORE_DIRS = {"__init__.py", "tests", "__pycache__", ".git", "venv", ".venv", "env", ".idea", ".mypy_cache", ".vscode"}
+IGNORE_FILES = {".env"}
+
+def list_files(base_path="."):
+    summary = []
+
+    for root, dirs, files in os.walk(base_path):
+        # Игнорируем ненужные папки
+        dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+        files = [f for f in files if f.endswith(".py") and f not in IGNORE_FILES]
+
+        # Строим "относительный путь"
+        rel_root = os.path.relpath(root, base_path)
+        for f in files:
+            path = os.path.join(rel_root, f) if rel_root != "." else f
+            summary.append(path)
+
+    return summary
+
+def print_project_structure(base_path="."):
+    print("📁 Структура проекта:\n")
+    for path in list_files(base_path):
+        print(f" - {path}")
+    print("\n📄 Содержимое файлов:\n")
+
+    for path in list_files(base_path):
+        print(f"\n🔹 {path}:\n{'-'*60}")
+        with open(os.path.join(base_path, path), "r", encoding="utf-8") as f:
+            print(f.read())
+
+if __name__ == "__main__":
+    import sys
+    with open('tree.txt', "w", encoding="utf-8") as f:
+        sys.stdout = f  # перенаправляем print в файл
+        print_project_structure()
+
+
+🔹 handlers\generation.py:
+------------------------------------------------------------
+from aiogram import types
+from aiogram.fsm.context import FSMContext
+from utils.states import GenerationStates
+from utils.user_state import single_user_lock, is_generating, set_generating
+from services.logo_generator import generate_image
+from aiogram.types import BufferedInputFile
+import logging
+from utils.user_roles import can_generate, increment_usage, get_usage, get_user_role, ROLE_LIMITS
+
+from keyboards import get_back_keyboard
+async def handle_idea(message: types.Message, state: FSMContext):
+    state_now = await state.get_state()
+    if state_now != GenerationStates.waiting_for_idea.state:
+        return
+
+    user_id = message.from_user.id
+
+    if not message.text:
+        await message.answer("❗️Ожидается текст с идеей логотипа.", reply_markup=get_back_keyboard())
+        return
+
+    if not can_generate(user_id):
+        usage = get_usage(user_id)
+        role = get_user_role(user_id)
+        g_used = usage["generations"]
+        g_total = ROLE_LIMITS[role]["generations"]
+
+        await message.answer(
+            f"❌ Вы исчерпали лимит <b>генераций логотипов</b>.\n\n"
+            f"🎨 Генераций: {g_used} / {g_total}\n"
+            f"ℹ️ Посмотреть лимиты можно через 'ℹ️ Информация'"
+        , reply_markup=get_back_keyboard())
+        return
+
+    if is_generating(user_id):
+        await message.answer("⏳ Пожалуйста, дождитесь завершения генерации логотипа.", reply_markup=get_back_keyboard())
+        return
+
+    async with single_user_lock(user_id):
+        set_generating(user_id, True)
+        await message.answer("Генерирую логотип, подожди немного...", reply_markup=get_back_keyboard())
+        try:
+            image = await generate_image(message.text)
+            image.seek(0)
+            input_file = BufferedInputFile(file=image.read(), filename="logo.png")
+            await message.answer_photo(photo=input_file, caption="Вот логотип по твоей идее!")
+            await message.answer("💡 Пришли ещё идею или нажми '⬅️ В меню'.", reply_markup=get_back_keyboard())
+            increment_usage(user_id, "generations")
+
+            # Добавляем сообщение об оставшемся лимите
+            role = get_user_role(user_id)
+            usage = get_usage(user_id)
+            g_left = ROLE_LIMITS[role]["generations"] - usage["generations"]
+            await message.answer(f"📊 Осталось генераций: {g_left}", reply_markup=get_back_keyboard())
+
+        except Exception as e:
+            logging.exception("Ошибка при генерации")
+            await message.answer(f"Произошла ошибка: {e}", reply_markup=get_back_keyboard())
+        finally:
+            set_generating(user_id, False)
+
+🔹 handlers\info.py:
+------------------------------------------------------------
+from aiogram import types
+from keyboards import get_main_keyboard
+from utils.user_state import set_user_state, STATE_MENU
+from utils.user_roles import get_user_role, get_usage, ROLE_LIMITS
+
+async def info(message: types.Message):
+    user_id = message.from_user.id
+    set_user_state(user_id, STATE_MENU)
+
+    role = get_user_role(user_id)
+    usage = get_usage(user_id)
+    limits = ROLE_LIMITS[role]
+
+    g = usage["generations"]
+    v = usage["vectorizations"]
+    g_limit = "∞" if limits["generations"] == float("inf") else limits["generations"]
+    v_limit = "∞" if limits["vectorizations"] == float("inf") else limits["vectorizations"]
+
+    await message.answer(
+        f"ℹ️ Генерация логотипов через GPT-4o + DALL·E 3.\n\n"
+        f"👤 Ваша роль: <b>{role}</b>\n"
+        f"🎨 Генераций: {g} / {g_limit}\n"
+        f"🖼 Векторизаций: {v} / {v_limit}",
+        reply_markup=get_main_keyboard()
+    )
+
+
+🔹 handlers\prompt.py:
+------------------------------------------------------------
+from aiogram import types
+from aiogram.fsm.context import FSMContext
+from keyboards import get_back_keyboard
+from utils.user_state import set_user_state, STATE_GENERATE
+from utils.states import GenerationStates  # ← Не забудь импорт
+
+async def prompt_for_idea(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    set_user_state(user_id, STATE_GENERATE)
+    await state.set_state(GenerationStates.waiting_for_idea)  # ← ВАЖНО: установим FSM-состояние
+    await message.answer(
+        "✍️ Отправь идею логотипа (например: 'логотип для кофейни в минималистичном стиле')",
+        reply_markup=get_back_keyboard()
+    )
+
+
+🔹 handlers\start.py:
+------------------------------------------------------------
+from aiogram import types
+from keyboards import get_main_keyboard
+from utils.user_state import set_user_state, STATE_MENU
+from utils.user_roles import set_user_role, get_user_role, ROLE_LIMITS
+
+ROLE_ORDER = ["user_free", "user_basic", "user_pro", "admin"]
+SETROLE_PASSWORD = "qweqweqwe"
+
+async def start(message: types.Message):
+    user_id = message.from_user.id
+    set_user_state(user_id, STATE_MENU)
+    await message.answer(
+        "👋 Привет! Я помогу сгенерировать логотип. Выбери действие:",
+        reply_markup=get_main_keyboard()
+    )
+
+async def setrole_command(message: types.Message):
+    user_id = message.from_user.id
+    parts = message.text.strip().split()
+
+    if len(parts) != 4 or parts[0] != "/setrole" or parts[1] != "me":
+        await message.answer(
+            "❓ Формат команды:\n"
+            "<code>/setrole me ПАРОЛЬ user_basic</code>\n"
+            "<code>/setrole me ПАРОЛЬ up</code>\n"
+            "<code>/setrole me ПАРОЛЬ down</code>",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    _, _, password, action = parts
+
+    if password != SETROLE_PASSWORD:
+        await message.answer("❌ Неверный пароль.", reply_markup=get_main_keyboard())
+        return
+
+    current_role = get_user_role(user_id)
+    current_index = ROLE_ORDER.index(current_role)
+
+    if action == "up":
+        new_index = min(current_index + 1, len(ROLE_ORDER) - 1)
+        new_role = ROLE_ORDER[new_index]
+    elif action == "down":
+        new_index = max(current_index - 1, 0)
+        new_role = ROLE_ORDER[new_index]
+    elif action in ROLE_ORDER:
+        new_role = action
+    else:
+        await message.answer(
+            "❌ Неверная роль. Допустимые значения: user_free, user_basic, user_pro, admin, up, down.",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    set_user_role(user_id, new_role)
+    await message.answer(
+        f"✅ Ваша роль обновлена: <b>{new_role}</b>\n"
+        f"🔁 Лимиты генераций и векторизаций были обнулены.",
+        reply_markup=get_main_keyboard()
+    )
+
+
+🔹 handlers\vectorize.py:
+------------------------------------------------------------
+from aiogram import types
+from aiogram.types import BufferedInputFile
+from keyboards import get_back_keyboard
+from utils.user_state import single_user_lock, is_generating, set_generating, set_user_state, STATE_VECTORIZE
+import logging
+import os
+import requests
+from dotenv import load_dotenv
+from utils.user_roles import can_vectorize, increment_usage, get_usage, get_user_role, ROLE_LIMITS
+
+load_dotenv()
+
+VECTORIZE_USER = os.getenv("VECTORIZE_USER")
+VECTORIZE_PASS = os.getenv("VECTORIZE_PASS")
+
+async def ask_for_image(message: types.Message):
+    user_id = message.from_user.id
+    role = get_user_role(user_id)
+    if ROLE_LIMITS[role]["vectorizations"] == 0:
+        await message.answer("❌ В вашей роли векторизация недоступна. Обновите роль.", reply_markup=get_back_keyboard())
+        return
+    set_user_state(user_id, STATE_VECTORIZE)
+    await message.answer("📤 Пришли изображение для векторизации.", reply_markup=get_back_keyboard())
+
+async def handle_vectorization_image(message: types.Message):
+    user_id = message.from_user.id
+
+    if not can_vectorize(user_id):
+        usage = get_usage(user_id)
+        role = get_user_role(user_id)
+        v_used = usage["vectorizations"]
+        v_total = ROLE_LIMITS[role]["vectorizations"]
+
+        await message.answer(
+            f"❌ Вы исчерпали лимит <b>векторизаций</b> для вашей роли.\n\n"
+            f"🖼 Векторизаций: {v_used} / {v_total}\n"
+            f"ℹ️ Посмотреть лимиты можно через 'ℹ️ Информация'"
+        , reply_markup=get_back_keyboard())
+        return
+
+    if is_generating(user_id):
+        await message.answer("⏳ Пожалуйста, дождитесь завершения векторизации.", reply_markup=get_back_keyboard())
+        return
+
+    async with single_user_lock(user_id):
+        set_generating(user_id, True)
+        try:
+            photo = message.photo[-1]
+            file = await message.bot.get_file(photo.file_id)
+            downloaded_file = await message.bot.download_file(file.file_path)
+
+            temp_path = f"temp_{user_id}.jpg"
+            with open(temp_path, "wb") as f:
+                f.write(downloaded_file.read())
+
+            await message.answer("🔄 Векторизую изображение, подождите...", reply_markup=get_back_keyboard())
+
+            with open(temp_path, "rb") as img:
+                response = requests.post(
+                    'https://ru.vectorizer.ai/api/v1/vectorize',
+                    files={'image': img},
+                    data={'mode': 'test'},
+                    auth=(VECTORIZE_USER, VECTORIZE_PASS)
+                )
+
+            os.remove(temp_path)
+
+            if response.status_code == 200:
+                svg_path = f"vectorized_{user_id}.svg"
+                with open(svg_path, "wb") as f:
+                    f.write(response.content)
+
+                with open(svg_path, "rb") as f:
+                    svg_file = BufferedInputFile(file=f.read(), filename="vectorized.svg")
+                    await message.answer_document(document=svg_file, caption="✅ Векторизация завершена!")
+                os.remove(svg_path)
+                increment_usage(user_id, "vectorizations")
+
+                # Добавляем сообщение об оставшемся лимите
+                role = get_user_role(user_id)
+                usage = get_usage(user_id)
+                v_left = ROLE_LIMITS[role]["vectorizations"] - usage["vectorizations"]
+                await message.answer(f"📊 Осталось векторизаций: {v_left}", reply_markup=get_back_keyboard())
+
+            else:
+                await message.answer(f"❌ Ошибка векторизации: {response.status_code}\n{response.text}", reply_markup=get_back_keyboard())
+
+        except Exception as e:
+            logging.exception("Ошибка при векторизации")
+            await message.answer(f"⚠️ Произошла ошибка: {e}", reply_markup=get_back_keyboard())
+        finally:
+            set_generating(user_id, False)
+
+
+🔹 handlers\__init__.py:
+------------------------------------------------------------
+
+
+🔹 services\logo_generator.py:
+------------------------------------------------------------
+import requests
+from io import BytesIO
+import asyncio
+from config import USE_PLACEHOLDER, OPENAI_API_KEY
+
+async def generate_image(prompt: str) -> BytesIO:
+    if USE_PLACEHOLDER:
+        # await asyncio.sleep(0.)
+        url = "https://placehold.co/1024x1024/png?text=Logo"
+        response = requests.get(url)
+        response.raise_for_status()
+        return BytesIO(response.content)
+
+    from openai import OpenAI
+    client = OpenAI(api_key=OPENAI_API_KEY)
+
+    chat = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": "Ты создаешь промпт для генерации логотипа через DALL·E 3."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+
+    prompt_dalle = chat.choices[0].message.content.strip()
+
+    image_response = client.images.generate(
+        model="dall-e-3",
+        prompt=prompt_dalle,
+        n=1,
+        size="1024x1024",
+        quality="standard",
+        style="vivid",
+    )
+
+    image_url = image_response.data[0].url
+    img_data = requests.get(image_url)
+    img_data.raise_for_status()
+
+    return BytesIO(img_data.content)
+
+
+🔹 services\__init__.py:
+------------------------------------------------------------
+
+
+🔹 utils\states.py:
+------------------------------------------------------------
+from aiogram.fsm.state import StatesGroup, State
+
+class GenerationStates(StatesGroup):
+    waiting_for_idea = State()
+
+
+🔹 utils\user_roles.py:
+------------------------------------------------------------
+# utils/user_roles.py
+
+import json
+import os
+from threading import Lock
+
+DB_PATH = "limits_db.json"
+db_lock = Lock()
+
+ROLE_LIMITS = {
+    "user_free": {"generations": 5, "vectorizations": 0},
+    "user_basic": {"generations": 10, "vectorizations": 1},
+    "user_pro": {"generations": 25, "vectorizations": 3},
+    "admin": {"generations": float("inf"), "vectorizations": float("inf")},
+}
+
+user_data = {}
+
+def load_db():
+    global user_data
+    if os.path.exists(DB_PATH):
+        with db_lock:
+            with open(DB_PATH, "r", encoding="utf-8") as f:
+                user_data = json.load(f)
+    else:
+        user_data = {}
+
+def save_db():
+    with db_lock:
+        with open(DB_PATH, "w", encoding="utf-8") as f:
+            json.dump(user_data, f, ensure_ascii=False, indent=2)
+
+def init_user(user_id: int):
+    uid = str(user_id)
+    if uid not in user_data:
+        user_data[uid] = {
+            "role": "user_free",
+            "generations": 0,
+            "vectorizations": 0,
+        }
+        save_db()
+
+def get_user_role(user_id: int) -> str:
+    init_user(user_id)
+    return user_data[str(user_id)]["role"]
+
+def set_user_role(user_id: int, role: str):
+    init_user(user_id)
+    user_data[str(user_id)]["role"] = role
+    user_data[str(user_id)]["generations"] = 0  # Сброс генераций
+    user_data[str(user_id)]["vectorizations"] = 0  # Сброс векторизаций
+    save_db()
+
+def get_usage(user_id: int):
+    init_user(user_id)
+    return user_data[str(user_id)]
+
+def can_generate(user_id: int) -> bool:
+    init_user(user_id)
+    role = get_user_role(user_id)
+    used = user_data[str(user_id)]["generations"]
+    return used < ROLE_LIMITS[role]["generations"]
+
+def can_vectorize(user_id: int) -> bool:
+    init_user(user_id)
+    role = get_user_role(user_id)
+    used = user_data[str(user_id)]["vectorizations"]
+    return used < ROLE_LIMITS[role]["vectorizations"]
+
+def increment_usage(user_id: int, action: str):
+    if action in ["generations", "vectorizations"]:
+        init_user(user_id)
+        user_data[str(user_id)][action] += 1
+        save_db()
+
+
+🔹 utils\user_state.py:
+------------------------------------------------------------
+import asyncio
+from contextlib import asynccontextmanager
+
+user_locks = {}
+user_generation_flags = {}
+user_states = {}
+
+STATE_MENU = "menu"
+STATE_GENERATE = "generate"
+STATE_VECTORIZE = "vectorize"
+
+@asynccontextmanager
+async def single_user_lock(user_id: int):
+    lock = user_locks.setdefault(user_id, asyncio.Lock())
+    async with lock:
+        yield
+
+def is_generating(user_id):
+    return user_generation_flags.get(user_id, False)
+
+def set_generating(user_id, value: bool):
+    user_generation_flags[user_id] = value
+
+def set_user_state(user_id: int, state: str):
+    user_states[user_id] = state
+
+def get_user_state(user_id: int) -> str:
+    return user_states.get(user_id, STATE_MENU)
+
+
+🔹 utils\__init__.py:
+------------------------------------------------------------
+
