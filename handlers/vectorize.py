@@ -60,7 +60,7 @@ async def handle_vectorization_image(message: types.Message):
                     'https://ru.vectorizer.ai/api/v1/vectorize',
                     files={'image': img},
                     data={'mode': 'test'},
-                    auth=(VECTORIZE_USER, VECTORIZE_PASS)
+                    auth=(VECTORIZE_USER, VECTORIZE_PASS)  # 👈 HTTP Basic Auth
                 )
 
             os.remove(temp_path)
@@ -76,7 +76,6 @@ async def handle_vectorization_image(message: types.Message):
                 os.remove(svg_path)
                 increment_usage(user_id, "vectorizations")
 
-                # Добавляем сообщение об оставшемся лимите
                 role = get_user_role(user_id)
                 usage = get_usage(user_id)
                 v_left = ROLE_LIMITS[role]["vectorizations"] - usage["vectorizations"]
