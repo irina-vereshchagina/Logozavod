@@ -73,7 +73,7 @@ async def generate_image(user_prompt: str) -> BytesIO:
     # 2. Генерация изображения
     try:
         img_response = client.chat.completions.create(
-            model="openai/gpt-5-image-mini",
+            model="openai/gpt-5-image",
             messages=[{"role": "user", "content": refined_prompt}],
             modalities=["image", "text"],
         )
